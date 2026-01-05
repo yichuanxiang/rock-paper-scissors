@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 猜拳大战</title>
+    <style>
+        /* 简单的样式美化，适配手机屏幕 */
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+        .container {
+            position: relative;
+            width: 100%;
+            max-width: 480px; /* 限制最大宽度，模仿手机App */
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            background: #000;
+        }
+        video {
+            width: 100%;
+            display: block;
+            transform: scaleX(-1); /* 镜像翻转 */
+        }
+        .overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        .score-board {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .result-text {
+            font-size: 1.5rem;
+            color: #ffeb3b;
+        }
+        #status {
+            margin-top: 10px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 1rem;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled { background-color: #ccc; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <h1>✊ AI 猜拳大战 ✌️</h1>
+    
+    <div class="container">
+        <video id="webcam" autoplay playsinline></video>
+        <div class="overlay">
+            <div class="score-board">
+                你: <span id="playerGesture">...</span> VS 电脑: <span id="cpuGesture">...</span>
+            </div>
+            <div class="result-text" id="gameResult">准备中...</div>
+        </div>
+    </div>
+    <div id="status">正在加载 AI 模型，请稍候...</div>
+    <button id="webcamButton" disabled>开启摄像头开始游戏</button>
+
+    <script type="module">
+        import { FilesetResolver, GestureRecognizer } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision";
+
+        let gestureRecognizer;
+        let runningMode = "VIDEO";
+        let lastVideoTime = -1;
+        let lastGameTime = 0;
+        const video = document.getElementById("webcam");
+        const playerSpan = document.getElementById("playerGesture");
+        const cpuSpan = document.getElementById("cpuGesture");
+        const resultDiv = document.getElementById("gameResult");
+        const statusDiv = document.getElementById("status");
+        const enableWebcamButton = document.getElementById("webcamButton");
+
+        // 1. 加载 MediaPipe 模型
+        const createGestureRecognizer = async () => {
+            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+            gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+                    delegate: "GPU"
+                },
+                runningMode: runningMode
+            });
+            statusDiv.innerText = "模型加载完毕！请点击按钮开始。";
+            enableWebcamButton.disabled = false;
+            enableWebcamButton.addEventListener("click", enableCam);
+        };
+
+        createGestureRecognizer();
+
+        // 2. 开启摄像头
+        function enableCam() {
+            if (!gestureRecognizer) {
+                alert("请等待模型加载完成");
+                return;
+            }
+
+            navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
+                video.srcObject = stream;
+                enableWebcamButton.style.display = "none";
+                statusDiv.innerText = "正在识别手势...";
+                video.addEventListener("loadeddata", predictWebcam);
+            }).catch((err) => {
+                console.error(err);
+                alert("无法访问摄像头，请确保给予权限（如果是手机，请使用 HTTPS 协议访问）");
+            });
+        }
+
+        // 3. 实时预测循环
+        async function predictWebcam() {
+            let nowInMs = Date.now();
+            
+            if (video.currentTime !== lastVideoTime) {
+                lastVideoTime = video.currentTime;
+                
+                // 让 MediaPipe 识别手势
+                const results = gestureRecognizer.recognizeForVideo(video, nowInMs);
+
+                // --- 游戏逻辑 ---
+                // 每 2 秒 (2000ms) 进行一次对决
+                if (nowInMs - lastGameTime > 2000) {
+                    lastGameTime = nowInMs;
+                    playGame(results);
+                }
+            }
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        // 4. 核心玩法逻辑
+        function playGame(results) {
+            // 获取玩家手势
+            let playerMove = "Unknown";
+            if (results.gestures.length > 0) {
+                const categoryName = results.gestures[0][0].categoryName;
+                const score = results.gestures[0][0].score;
+
+                // 只有置信度大于 50% 才算有效
+                if(score > 0.5) {
+                    if (categoryName === "Open_Palm") playerMove = "布";
+                    else if (categoryName === "Closed_Fist") playerMove = "石头";
+                    else if (categoryName === "Victory") playerMove = "剪刀";
+                }
+            }
+
+            // 更新玩家显示
+            playerSpan.innerText = playerMove === "Unknown" ? "❓" : playerMove;
+
+            // 电脑随机出拳
+            const moves = ["石头", "剪刀", "布"];
+            const cpuMove = moves[Math.floor(Math.random() * moves.length)];
+            cpuSpan.innerText = cpuMove;
+
+            // 判断胜负
+            if (playerMove === "Unknown") {
+                resultDiv.innerText = "请出手势！";
+                resultDiv.style.color = "#fff";
+            } else if (playerMove === cpuMove) {
+                resultDiv.innerText = "平局！🤝";
+                resultDiv.style.color = "#ffeb3b";
+            } else if (
+                (playerMove === "石头" && cpuMove === "剪刀") ||
+                (playerMove === "剪刀" && cpuMove === "布") ||
+                (playerMove === "布" && cpuMove === "石头")
+            ) {
+                resultDiv.innerText = "你赢了！🎉";
+                resultDiv.style.color = "#4caf50";
+            } else {
+                resultDiv.innerText = "电脑赢了！🤖";
+                resultDiv.style.color = "#f44336";
+            }
+        }
+    </script>
+</body>
+</html>
